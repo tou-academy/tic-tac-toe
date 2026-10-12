@@ -14,7 +14,30 @@
     background: #f4f4f8;
     color: #222;
   }
-  #difficulty { margin-bottom: .5rem; }
+  [hidden] { display: none !important; }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 1.2rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.15);
+    width: min(100%, 340px);
+    box-sizing: border-box;
+  }
+  .card input {
+    display: block; width: 100%; box-sizing: border-box;
+    margin: .5rem 0; padding: .6rem; font-size: 1rem;
+    border: 1px solid #ccc; border-radius: 6px;
+  }
+  .row { display: flex; gap: .5rem; }
+  .row button { flex: 1; }
+  button.btn {
+    padding: .6rem 1rem; font-size: 1rem; border: none; border-radius: 6px;
+    background: #333; color: #fff; cursor: pointer;
+  }
+  button.btn.secondary { background: #ddd; color: #222; }
+  #msg { margin-top: .6rem; min-height: 1.2em; font-size: .9rem; color: #b00; }
+  #msg.ok { color: #2a7a2a; }
+  #topbar { display: flex; gap: .8rem; align-items: center; margin-bottom: 1rem; font-size: .9rem; }
   #difficulty select { font-size: 1rem; padding: .3rem; }
   #status { font-size: 1.3rem; margin: 1rem 0; min-height: 1.6em; }
   #board {
@@ -24,47 +47,70 @@
     gap: 6px;
   }
   .cell {
-    background: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 3rem;
-    font-weight: bold;
-    cursor: pointer;
+    background: #fff; border: none; border-radius: 8px;
+    font-size: 3rem; font-weight: bold; cursor: pointer;
     box-shadow: 0 1px 3px rgba(0,0,0,.2);
   }
   .cell:disabled { cursor: default; }
   .cell.X { color: #d33; }
   .cell.O { color: #27a; }
   .cell.win { background: #cfe8cf; }
-  button#reset {
-    margin-top: 1.5rem;
-    padding: .6rem 1.2rem;
-    font-size: 1rem;
-    border: none;
-    border-radius: 6px;
-    background: #333;
-    color: #fff;
-    cursor: pointer;
+  #score { margin: 1rem 0; color: #555; }
+  #games { margin-top: 1.5rem; }
+  #games h2 { font-size: 1.1rem; margin: 0 0 .5rem; }
+  #games ul { list-style: none; margin: 0; padding: 0; }
+  #games li {
+    display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+    padding: .5rem 0; border-top: 1px solid #eee; font-size: .9rem;
   }
-  #score { margin-top: 1rem; color: #555; }
+  #games li button { padding: .3rem .7rem; font-size: .85rem; }
 </style>
 </head>
 <body>
   <h1>Tic-Tac-Toe</h1>
-  <div id="difficulty">
-    <label>Difficulty:
-      <select id="level">
-        <option value="easy">Easy</option>
-        <option value="medium" selected>Medium</option>
-        <option value="hard">Hard (unbeatable)</option>
-      </select>
-    </label>
-  </div>
-  <div id="status"></div>
-  <div id="board"></div>
-  <div id="score"></div>
-  <button id="reset">New game</button>
 
+  <!-- Login / sign up -->
+  <section id="auth" class="card" hidden>
+    <strong>Log in to play</strong>
+    <form id="authForm">
+      <input id="email" type="email" placeholder="Email" autocomplete="email" required>
+      <input id="password" type="password" placeholder="Password (min 6 characters)" autocomplete="current-password" minlength="6" required>
+      <div class="row">
+        <button class="btn" type="submit" id="loginBtn">Log in</button>
+        <button class="btn secondary" type="button" id="signupBtn">Sign up</button>
+      </div>
+    </form>
+    <div id="msg"></div>
+  </section>
+
+  <!-- Game -->
+  <section id="app" hidden style="display:flex;flex-direction:column;align-items:center;width:100%">
+    <div id="topbar">
+      <span id="who"></span>
+      <button class="btn secondary" id="logout">Log out</button>
+    </div>
+    <div id="difficulty">
+      <label>Difficulty:
+        <select id="level">
+          <option value="easy">Easy</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard (unbeatable)</option>
+        </select>
+      </label>
+    </div>
+    <div id="status"></div>
+    <div id="board"></div>
+    <div id="score"></div>
+    <button class="btn" id="reset">New game</button>
+
+    <div id="games" class="card">
+      <h2>My games</h2>
+      <ul id="gameList"></ul>
+    </div>
+  </section>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
 <script>
   const HUMAN = 'X', CPU = 'O';
   const LINES = [
@@ -72,12 +118,12 @@
     [0,3,6],[1,4,7],[2,5,8],
     [0,4,8],[2,4,6]
   ];
-  const boardEl = document.getElementById('board');
-  const statusEl = document.getElementById('status');
-  const scoreEl = document.getElementById('score');
-  const levelEl = document.getElementById('level');
-  const score = { X: 0, O: 0, draws: 0 };
-  let board, over, thinking;
+  const $ = id => document.getElementById(id);
+  const boardEl = $('board'), statusEl = $('status'), scoreEl = $('score'), levelEl = $('level');
+  const msgEl = $('msg'), authEl = $('auth'), appEl = $('app');
+
+  let sb, user = null;
+  let board, over, thinking, gameId;
 
   const cells = Array.from({ length: 9 }, (_, i) => {
     const b = document.createElement('button');
@@ -93,6 +139,13 @@
     return LINES.find(l => b[l[0]] && b[l[0]] === b[l[1]] && b[l[0]] === b[l[2]]) || null;
   }
   const emptyCells = b => b.map((v, i) => v ? -1 : i).filter(i => i >= 0);
+  const encode = b => b.map(v => v || '-').join('');
+  const decode = s => s.split('').map(c => c === '-' ? '' : c);
+  function statusOf(b) {
+    const w = winnerLine(b);
+    if (w) return b[w[0]] === HUMAN ? 'won' : 'lost';
+    return b.every(Boolean) ? 'draw' : 'in_progress';
+  }
 
   // ---- computer player ----
   function randomMove(b) {
@@ -154,58 +207,169 @@
     }
   }
 
+  // ---- saving to Supabase ----
+  // The game row is created on the player's first move, then updated after every move.
+  async function save() {
+    const fields = {
+      board: encode(board),
+      difficulty: levelEl.value,
+      status: statusOf(board),
+      updated_at: new Date().toISOString()
+    };
+    let error;
+    if (!gameId) {
+      let data;
+      ({ data, error } = await sb.from('games').insert(fields).select('id').single());
+      if (data) gameId = data.id;
+    } else {
+      ({ error } = await sb.from('games').update(fields).eq('id', gameId));
+    }
+    if (error) {
+      statusEl.textContent = 'Could not save game: ' + error.message;
+      return false;
+    }
+    return true;
+  }
+
+  async function loadGames() {
+    const { data, error } = await sb.from('games').select('*').order('updated_at', { ascending: false }).limit(50);
+    const list = $('gameList');
+    list.innerHTML = '';
+    if (error) { list.textContent = 'Could not load games: ' + error.message; return; }
+
+    const count = s => data.filter(g => g.status === s).length;
+    scoreEl.textContent = `Wins: ${count('won')}  ·  Losses: ${count('lost')}  ·  Draws: ${count('draw')}`;
+
+    if (!data.length) { list.innerHTML = '<li>No games yet. Make a move to start one!</li>'; return; }
+    const label = { in_progress: 'In progress', won: 'You won', lost: 'Computer won', draw: 'Draw' };
+    for (const g of data) {
+      const li = document.createElement('li');
+      const info = document.createElement('span');
+      info.textContent = `${new Date(g.updated_at).toLocaleString()} · ${g.difficulty} · ${label[g.status]}`;
+      const btn = document.createElement('button');
+      btn.className = 'btn secondary';
+      btn.textContent = g.status === 'in_progress' ? 'Continue' : 'View';
+      btn.addEventListener('click', () => openGame(g));
+      li.append(info, btn);
+      list.appendChild(li);
+    }
+  }
+
   // ---- UI flow ----
-  function start() {
+  function renderBoard() {
+    const line = winnerLine(board);
+    cells.forEach((c, i) => {
+      c.textContent = board[i];
+      c.className = 'cell' + (board[i] ? ' ' + board[i] : '') + (line && line.includes(i) ? ' win' : '');
+      c.disabled = over || !!board[i];
+    });
+  }
+
+  function showResult() {
+    const s = statusOf(board);
+    statusEl.textContent = { won: 'You win!', lost: 'Computer wins!', draw: "It's a draw!" }[s] || 'Your turn (X)';
+  }
+
+  function newGame() {
     board = Array(9).fill('');
     over = false;
     thinking = false;
-    cells.forEach(c => { c.textContent = ''; c.className = 'cell'; c.disabled = false; });
-    statusEl.textContent = 'Your turn (X)';
-    renderScore();
+    gameId = null;
+    renderBoard();
+    showResult();
   }
 
-  function renderScore() {
-    scoreEl.textContent = `You: ${score.X}  ·  Computer: ${score.O}  ·  Draws: ${score.draws}`;
+  function openGame(g) {
+    board = decode(g.board);
+    gameId = g.id;
+    levelEl.value = g.difficulty;
+    over = g.status !== 'in_progress';
+    thinking = false;
+    renderBoard();
+    showResult();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // The page may have been closed right after the player moved: let the computer reply.
+    const xs = board.filter(v => v === HUMAN).length, os = board.filter(v => v === CPU).length;
+    if (!over && xs > os) cpuTurn();
   }
 
-  function place(i, p) {
-    board[i] = p;
-    cells[i].textContent = p;
-    cells[i].classList.add(p);
-    cells[i].disabled = true;
-
-    const line = winnerLine(board);
-    if (line) {
-      over = true;
-      line.forEach(k => cells[k].classList.add('win'));
-      cells.forEach(c => c.disabled = true);
-      score[p]++;
-      statusEl.textContent = p === HUMAN ? 'You win!' : 'Computer wins!';
-    } else if (board.every(Boolean)) {
-      over = true;
-      score.draws++;
-      statusEl.textContent = "It's a draw!";
-    }
-    renderScore();
-  }
-
-  function humanMove(i) {
-    if (over || thinking || board[i]) return;
-    place(i, HUMAN);
-    if (over) return;
+  async function cpuTurn() {
     thinking = true;
     statusEl.textContent = 'Computer is thinking…';
-    setTimeout(() => {
-      if (over || !thinking) return;
-      place(chooseMove(board), CPU);
-      thinking = false;
-      if (!over) statusEl.textContent = 'Your turn (X)';
-    }, 350);
+    await new Promise(r => setTimeout(r, 350));
+    if (!thinking) return;           // a different game was opened meanwhile
+    board[chooseMove(board)] = CPU;
+    over = statusOf(board) !== 'in_progress';
+    renderBoard();
+    showResult();
+    thinking = false;
+    await save();
+    loadGames();
   }
 
-  document.getElementById('reset').addEventListener('click', start);
-  levelEl.addEventListener('change', () => { score.X = score.O = score.draws = 0; start(); });
-  start();
+  async function humanMove(i) {
+    if (over || thinking || board[i]) return;
+    board[i] = HUMAN;
+    over = statusOf(board) !== 'in_progress';
+    thinking = true;                 // block clicks while saving
+    renderBoard();
+    showResult();
+    const ok = await save();
+    thinking = false;
+    if (!ok) return;
+    if (over) { loadGames(); return; }
+    cpuTurn();
+  }
+
+  // ---- auth ----
+  function showMsg(text, ok) { msgEl.textContent = text; msgEl.className = ok ? 'ok' : ''; }
+
+  async function render() {
+    authEl.hidden = !!user;
+    appEl.hidden = !user;
+    if (user) {
+      $('who').textContent = user.email;
+      newGame();
+      loadGames();
+    }
+  }
+
+  async function init() {
+    if (!window.supabase || window.SUPABASE_URL.startsWith('YOUR_')) {
+      authEl.hidden = false;
+      $('authForm').hidden = true;
+      showMsg('Supabase is not set up yet. Fill in config.js (see SETUP.md).');
+      return;
+    }
+    sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+    $('authForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const { error } = await sb.auth.signInWithPassword({ email: $('email').value, password: $('password').value });
+      showMsg(error ? error.message : '');
+    });
+    $('signupBtn').addEventListener('click', async () => {
+      if (!$('authForm').reportValidity()) return;
+      const { data, error } = await sb.auth.signUp({ email: $('email').value, password: $('password').value });
+      if (error) showMsg(error.message);
+      else if (!data.session) showMsg('Account created! Check your email to confirm, then log in.', true);
+    });
+    $('logout').addEventListener('click', () => sb.auth.signOut());
+    $('reset').addEventListener('click', newGame);
+    levelEl.addEventListener('change', () => { if (gameId && !over) save(); });
+
+    sb.auth.onAuthStateChange((_event, session) => {
+      const newUser = session ? session.user : null;
+      if ((newUser && newUser.id) === (user && user.id)) return;   // ignore token refreshes
+      user = newUser;
+      render();
+    });
+    const { data } = await sb.auth.getSession();
+    if (!user && data.session) { user = data.session.user; render(); }
+    else if (!user) render();
+  }
+
+  init();
 </script>
 </body>
 </html>
